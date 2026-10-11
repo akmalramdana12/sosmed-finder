@@ -1,0 +1,9 @@
+# TLS otomatis (Let's Encrypt) untuk {$APP_DOMAIN}. Caddy adalah SATU-SATUNYA reverse proxy,
+# sehingga TRUST_PROXY=true benar: entri terakhir X-Forwarded-For adalah IP yang dilihat Caddy.
+{$APP_DOMAIN} {
+	encode zstd gzip
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy web:3000
+}

@@ -1,0 +1,36 @@
+{
+  "name": "social-finder",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "db:init-migration": "pnpm --filter @social-finder/database db:init-migration",
+    "db:migrate": "pnpm --filter @social-finder/database db:migrate",
+    "db:deploy": "pnpm --filter @social-finder/database db:deploy",
+    "db:seed": "pnpm --filter @social-finder/database db:seed",
+    "db:validate": "pnpm --filter @social-finder/database db:validate",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.5",
+    "dotenv-cli": "^11.0.0",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.10",
+    "tsx": "^4.23.15",
+    "turbo": "^2.11.7",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.1",
+    "vitest": "^5.0.3"
+  }
+}

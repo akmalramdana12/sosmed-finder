@@ -1,0 +1,11 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# pnpm 10 tidak menjalankan skrip install paket secara default. Prisma membutuhkannya untuk
+# mengunduh/menyiapkan engine; esbuild (dipakai tsx/vitest) untuk binarinya.
+onlyBuiltDependencies:
+  - "@prisma/client"
+  - "@prisma/engines"
+  - prisma
+  - esbuild

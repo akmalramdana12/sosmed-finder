@@ -1,0 +1,103 @@
+# Produksi satu host. Jalankan:
+#   cp .env.production.example .env.production   (isi semua nilai)
+#   docker compose --env-file .env.production -f docker-compose.prod.yml build
+#   docker compose --env-file .env.production -f docker-compose.prod.yml up -d
+# Postgres dan Redis TIDAK dipublikasikan ke host; hanya Caddy (80/443) yang terbuka.
+# BELUM TERUJI: belum pernah dijalankan.
+name: social-finder
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?isi APP_DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+
+  web:
+    build: { context: ., target: web }
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      SESSION_SECRET: ${SESSION_SECRET:?isi SESSION_SECRET}
+      APP_ORIGIN: https://${APP_DOMAIN}
+      TRUST_PROXY: "true"
+      SMTP_URL: ${SMTP_URL:?isi SMTP_URL}
+      MAIL_FROM: ${MAIL_FROM:?isi MAIL_FROM}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/apps/web/.next/cache:uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  worker:
+    build: { context: ., target: worker }
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  migrate:
+    build: { context: ., target: migrate }
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  postgres:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    command: ["postgres", "-c", "jit=off"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/20-extensions.sql:/docker-entrypoint-initdb.d/20-extensions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?isi REDIS_PASSWORD}
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:

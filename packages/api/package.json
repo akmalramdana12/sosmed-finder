@@ -1,0 +1,40 @@
+{
+  "name": "@social-finder/api",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./auth": "./src/modules/auth/index.ts",
+    "./auth/node": "./src/modules/auth/node.ts",
+    "./profile": "./src/modules/profile/index.ts",
+    "./profile/node": "./src/modules/profile/node.ts",
+    "./social-accounts": "./src/modules/social-accounts/index.ts",
+    "./social-accounts/node": "./src/modules/social-accounts/node.ts",
+    "./privacy": "./src/modules/privacy/index.ts",
+    "./privacy/node": "./src/modules/privacy/node.ts",
+    "./location": "./src/modules/location/index.ts",
+    "./location/node": "./src/modules/location/node.ts",
+    "./search": "./src/modules/search/index.ts",
+    "./search/node": "./src/modules/search/node.ts",
+    "./safety": "./src/modules/safety/index.ts",
+    "./safety/node": "./src/modules/safety/node.ts",
+    "./account": "./src/modules/account/index.ts",
+    "./account/node": "./src/modules/account/node.ts",
+    "./maintenance": "./src/modules/maintenance/index.ts",
+    "./maintenance/node": "./src/modules/maintenance/node.ts",
+    "./recovery": "./src/modules/recovery/index.ts",
+    "./recovery/node": "./src/modules/recovery/node.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "test:integration": "dotenv -e ../../.env.test -- vitest run -c vitest.integration.config.ts"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.2.2",
+    "@social-finder/database": "workspace:*",
+    "@social-finder/types": "workspace:*",
+    "@social-finder/validation": "workspace:*"
+  }
+}

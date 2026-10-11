@@ -1,0 +1,280 @@
+// Social Finder — skema database (PostgreSQL + PostGIS).
+// Constraint, index spasial, dan partial index yang tidak bisa diungkapkan Prisma
+// ada di prisma/sql/extras.sql dan ditambahkan ke migrasi init (lihat README).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_DELETION
+}
+
+enum LocationVisibility {
+  PRIVATE
+  AREA_ONLY
+  CITY_ONLY
+  DISCOVERABLE_RADIUS
+}
+
+enum AccuracyLevel {
+  AREA
+  CITY
+}
+
+enum ReportReason {
+  SPAM
+  IMPERSONATION
+  HARASSMENT
+  INAPPROPRIATE_CONTENT
+  PRIVACY_VIOLATION
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWING
+  RESOLVED
+  DISMISSED
+}
+
+enum TokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  SOCIAL_CLAIM
+}
+
+model User {
+  id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Selalu lowercase (dipaksa CHECK di extras.sql).
+  email              String     @unique
+  emailVerifiedAt    DateTime?  @db.Timestamptz(3)
+  /// Hash argon2id. Jangan pernah di-log atau dikembalikan lewat API.
+  passwordHash       String
+  /// Bentuk tampilan username.
+  username           String
+  /// = lower(username) (dipaksa CHECK di extras.sql); dipakai untuk keunikan dan pencarian.
+  normalizedUsername String     @unique
+  status             UserStatus @default(ACTIVE)
+  /// Soft-delete: akun langsung hilang dari search; hard-delete oleh worker.
+  deletedAt          DateTime?  @db.Timestamptz(3)
+  createdAt          DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime   @updatedAt @db.Timestamptz(3)
+
+  profile            Profile?
+  privacy            PrivacySettings?
+  location           Location?
+  socialAccounts     SocialAccount[]
+  sessions           Session[]
+  verificationTokens VerificationToken[]
+  blocksMade         Block[]             @relation("Blocker")
+  blocksReceived     Block[]             @relation("Blocked")
+  reportsMade        Report[]            @relation("Reporter")
+  reportsReceived    Report[]            @relation("ReportTarget")
+  auditLogs          AuditLog[]
+  searchLogs         SearchLog[]
+  notifications      Notification[]
+
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model Profile {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @unique @db.Uuid
+  displayName String   @db.VarChar(80)
+  bio         String?  @db.VarChar(500)
+  avatarUrl   String?  @db.VarChar(2048)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PrivacySettings {
+  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId               String             @unique @db.Uuid
+  /// Default PRIVATE (opt-in).
+  locationVisibility   LocationVisibility @default(PRIVATE)
+  /// Default false: tidak ditemukan sampai pengguna mengaktifkan sendiri.
+  isDiscoverable       Boolean            @default(false)
+  searchableByUsername Boolean            @default(true)
+  showPlatforms        Boolean            @default(true)
+  updatedAt            DateTime           @default(now()) @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SocialPlatform {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// mis. "instagram", "x"
+  key         String   @unique
+  name        String
+  /// Template berisi {username}; profileUrl SELALU dibangun dari sini (anti SSRF/XSS).
+  urlTemplate String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  accounts SocialAccount[]
+}
+
+model SocialAccount {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String   @db.Uuid
+  platformId         String   @db.Uuid
+  username           String
+  /// = lower(username) (dipaksa CHECK di extras.sql).
+  normalizedUsername String
+  profileUrl         String   @db.VarChar(2048)
+  isVerified         Boolean  @default(false)
+  isDiscoverable     Boolean  @default(false)
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @db.Timestamptz(3)
+
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform SocialPlatform @relation(fields: [platformId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, platformId, normalizedUsername])
+  @@index([userId])
+  @@index([platformId, normalizedUsername])
+}
+
+model Location {
+  id                 String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String                          @unique @db.Uuid
+  /// Titik yang SUDAH di-snap ke centroid sel grid sesuai accuracyLevel.
+  /// Koordinat presisi tidak pernah disimpan. Ditulis lewat $executeRaw terparameter
+  /// (Prisma tidak bisa membuat baris dengan kolom Unsupported); tidak pernah dikembalikan ke klien.
+  geography          Unsupported("geography(Point,4326)")
+  accuracyLevel      AccuracyLevel
+  /// Label area yang dinyatakan pengguna sendiri, mis. "Sekupang". Terikat pada titik:
+  /// direset saat titik diganti. Belum diverifikasi terhadap koordinat (menunggu data wilayah).
+  areaLabel          String?                         @db.VarChar(100)
+  /// Label kota yang dinyatakan pengguna sendiri, mis. "Batam". Aturan yang sama dengan areaLabel.
+  cityLabel          String?                         @db.VarChar(100)
+  /// Meter: pengguna hanya dapat ditemukan oleh pencari yang berjarak <= nilai ini.
+  /// Batas 1000..50000 dipaksa CHECK di extras.sql.
+  discoverableRadius Int                             @default(5000)
+  isEnabled          Boolean                         @default(false)
+  updatedAt          DateTime                        @default(now()) @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Block {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  blockerId String   @db.Uuid
+  blockedId String   @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+model Report {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Null bila pelapor menghapus akunnya (laporan tetap ada untuk moderasi).
+  reporterId   String?      @db.Uuid
+  targetUserId String       @db.Uuid
+  reason       ReportReason
+  details      String?      @db.VarChar(1000)
+  status       ReportStatus @default(OPEN)
+  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
+  resolvedAt   DateTime?    @db.Timestamptz(3)
+
+  reporter User? @relation("Reporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  target   User  @relation("ReportTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([targetUserId])
+}
+
+model Session {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String    @db.Uuid
+  /// Hash token; token mentah tidak pernah disimpan.
+  tokenHash  String    @unique
+  expiresAt  DateTime  @db.Timestamptz(3)
+  ipHash     String?
+  userAgent  String?   @db.VarChar(255)
+  revokedAt  DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model VerificationToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @db.Uuid
+  type      TokenType
+  tokenHash String    @unique
+  expiresAt DateTime  @db.Timestamptz(3)
+  usedAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId  String?  @db.Uuid
+  action   String
+  entity   String
+  entityId String?
+  /// Tanpa data sensitif (password, token, lokasi presisi).
+  metadata Json?
+  ipHash   String?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+model SearchLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  searcherId  String   @db.Uuid
+  /// Hash query, bukan teks mentah.
+  queryHash   String
+  /// Filter ringkas (platform, radius, mode). Tanpa lokasi presisi.
+  filters     Json?
+  resultCount Int
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  searcher User @relation(fields: [searcherId], references: [id], onDelete: Cascade)
+
+  @@index([searcherId, createdAt])
+  /// Untuk purge retensi pendek oleh worker.
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @db.Uuid
+  type      String
+  payload   Json?
+  readAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
