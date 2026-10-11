@@ -63,12 +63,23 @@ describe("integrasi: lokasi", () => {
   });
 
   it("titik baru menimpa baris yang sama (satu baris per pengguna) dan mereset label", async () => {
-    await service().setLocation(USER, { latitude: 1.5, longitude: 104.5, accuracyLevel: "CITY" }, CTX);
+    // Visibilitas AREA_ONLY diwarisi dari langkah sebelumnya dan butuh label baru, jadi titik baru
+    // tanpa label ditolak (lihat tes berikutnya). Di sini visibilitas diturunkan ke PRIVATE secara eksplisit.
+    await service().setLocation(USER, { latitude: 1.5, longitude: 104.5, accuracyLevel: "CITY", visibility: "PRIVATE" }, CTX);
     const rows = await prisma.$queryRawUnsafe<Array<{ n: number }>>(`SELECT count(*)::int AS n FROM "Location" WHERE "userId" = '${USER}'::uuid`);
     expect(Number(rows[0]?.n)).toBe(1);
     const dto = await service().getMine(USER);
     expect(dto?.accuracyLevel).toBe("CITY");
     expect(dto?.areaLabel).toBeNull();
+  });
+
+  it("titik baru tanpa label ditolak bila visibilitas yang berlaku menampilkan label", async () => {
+    await service().setLocation(USER, { latitude: 1.5, longitude: 104.5, accuracyLevel: "AREA", visibility: "AREA_ONLY", areaLabel: "Batam Centre" }, CTX);
+    await expect(
+      service().setLocation(USER, { latitude: 1.51, longitude: 104.51, accuracyLevel: "AREA" }, CTX),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    const dto = await service().getMine(USER);
+    expect(dto?.areaLabel).toBe("Batam Centre");
   });
 
   it("menghapus lokasi mengembalikan visibilitas ke PRIVATE", async () => {
