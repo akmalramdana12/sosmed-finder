@@ -1,0 +1,323 @@
+# Bootstrap / sinkronisasi lewat GitHub Actions (tanpa komputer).
+#
+# Cara pakai (dari HP): repo berisi file workflow ini + SATU file `social-finder.zip` (unduhan dari Claude).
+# Jalankan: tab Actions -> "Bootstrap" -> Run workflow.
+#
+# Dua mode, dipilih otomatis:
+#  - PERTAMA KALI (branch `bootstrap-output` belum ada): memasang semua dependensi (menghasilkan
+#    pnpm-lock.yaml) dan membuat migrasi Prisma "init".
+#  - SESUDAHNYA (branch ada): memakai branch itu sebagai basis, menimpa kode dengan isi zip yang baru,
+#    mempertahankan pnpm-lock.yaml, migrasi, dan versi dependensi yang sudah terpasang, lalu hanya
+#    menambah dependensi baru (scripts/add-deps.sh).
+# Job kedua `extended` (bisa dimatikan lewat input) menjalankan tes integrasi (PostGIS asli), e2e API (Playwright),
+# dan build + smoke test Docker, pada hasil bootstrap. Semuanya baru pertama kali dijalankan.
+# Hasil: branch `bootstrap-output` + artifact `social-finder-bootstrapped`; typecheck/test/build dilaporkan di Summary.
+# BELUM TERUJI penuh: bila gagal, kirim screenshot langkah yang merah.
+name: Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      extended:
+        description: "Jalankan juga tes integrasi, e2e, dan build Docker setelah bootstrap"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: sf
+          POSTGRES_PASSWORD: sf
+          POSTGRES_DB: sf_boot
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sf -d sf_boot" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sf:sf@localhost:5432/sf_boot
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tentukan mode dan siapkan basis
+        run: |
+          if [ -f social-finder.zip ]; then cp social-finder.zip /tmp/in.zip; fi
+          if git ls-remote --exit-code --heads origin bootstrap-output >/dev/null 2>&1; then
+            echo "MODE=existing" >> "$GITHUB_ENV"
+            git checkout -f -B bootstrap-output origin/bootstrap-output
+          else
+            echo "MODE=fresh" >> "$GITHUB_ENV"
+          fi
+
+      - name: Timpa dengan isi social-finder.zip
+        run: |
+          if [ -f /tmp/in.zip ]; then
+            rm -rf /tmp/sfzip /tmp/oldpkgs && mkdir /tmp/sfzip /tmp/oldpkgs
+            unzip -q /tmp/in.zip -d /tmp/sfzip
+            SRC=$(find /tmp/sfzip -maxdepth 2 -name package.json -path '*/social-finder/package.json' -printf '%h\n' | head -1)
+            if [ -z "$SRC" ]; then SRC=/tmp/sfzip; fi
+            test -f "$SRC/package.json" || { echo "package.json proyek tidak ditemukan di zip"; exit 1; }
+            # simpan package.json lama (berisi versi dependensi hasil bootstrap) untuk digabung
+            find . -name package.json -not -path '*/node_modules/*' -not -path './.git/*' -exec cp --parents {} /tmp/oldpkgs \;
+            # .github tidak disalin: GITHUB_TOKEN tidak boleh mengubah file workflow saat push.
+            rsync -a --exclude '.github/' "$SRC"/ ./
+            echo "SRC_DIR=$SRC" >> "$GITHUB_ENV"
+          else
+            echo "Tidak ada social-finder.zip: memakai isi repo apa adanya."
+          fi
+          rm -f social-finder.zip
+          test -f package.json || { echo "package.json tidak ada di root repo"; exit 1; }
+
+      - name: Pertahankan dependensi terpasang di package.json
+        if: env.MODE == 'existing'
+        run: |
+          python3 - <<'PY'
+          import json, os
+          old_root = "/tmp/oldpkgs"
+          for dirpath, _, files in os.walk(old_root):
+              if "package.json" not in files:
+                  continue
+              rel = os.path.relpath(os.path.join(dirpath, "package.json"), old_root)
+              if not os.path.exists(rel):
+                  continue
+              old = json.load(open(os.path.join(dirpath, "package.json")))
+              new = json.load(open(rel))
+              for key in ("dependencies", "devDependencies"):
+                  merged = dict(new.get(key, {}))
+                  merged.update(old.get(key, {}))
+                  if merged:
+                      new[key] = dict(sorted(merged.items()))
+              with open(rel, "w") as f:
+                  json.dump(new, f, indent=2)
+                  f.write("\n")
+              print("digabung:", rel)
+          PY
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Pasang dependensi - pertama kali (menghasilkan pnpm-lock.yaml)
+        if: env.MODE == 'fresh'
+        run: bash scripts/install-deps.sh
+
+      - name: Pasang dependensi - sinkronisasi (hanya yang baru)
+        if: env.MODE == 'existing'
+        run: |
+          bash scripts/add-deps.sh
+          pnpm install
+          pnpm --filter @social-finder/database db:generate
+
+      - name: Siapkan PostGIS (template1 untuk shadow database Prisma, dan database utama)
+        run: |
+          psql "postgresql://sf:sf@localhost:5432/template1" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+
+      - name: Buat migrasi init (+ extras.sql), hanya bila belum ada
+        run: |
+          echo "DATABASE_URL=$DATABASE_URL" > .env
+          if ls packages/database/prisma/migrations/*_init >/dev/null 2>&1; then
+            echo "Migrasi init sudah ada: dilewati."
+          else
+            pnpm db:init-migration
+          fi
+
+      - name: Terapkan migrasi pada DB kosong (bukti migrasi valid)
+        run: pnpm db:deploy
+
+      - name: Typecheck
+        id: typecheck
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pnpm exec turbo run typecheck --continue 2>&1 | tee /tmp/typecheck.log
+      - name: Test unit
+        id: test
+        continue-on-error: true
+        run: pnpm test
+      - name: Build
+        id: build
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pnpm exec turbo run build --continue 2>&1 | tee /tmp/build.log
+
+      - name: Ringkasan
+        if: always()
+        run: |
+          {
+            echo "## Hasil bootstrap (mode: $MODE)"
+            echo "- typecheck: ${{ steps.typecheck.outcome }}"
+            echo "- test: ${{ steps.test.outcome }}"
+            echo "- build: ${{ steps.build.outcome }}"
+            echo "- pnpm-lock.yaml: $(test -f pnpm-lock.yaml && echo ada || echo TIDAK ADA)"
+            echo "- migrasi: $(ls packages/database/prisma/migrations | grep -v lock | tr '\n' ' ')"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for name in typecheck build; do
+            if [ -f /tmp/$name.log ]; then
+              {
+                echo
+                echo "### Error $name (maks. 70 baris, tanpa warna)"
+                echo '```'
+                sed 's/\x1b\[[0-9;]*m//g' /tmp/$name.log | grep -iE "error|failed|cannot|TS[0-9]{4}|ERR_" | head -70
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+      - name: Susun hasil (proyek lengkap tanpa node_modules)
+        run: |
+          mkdir -p /tmp/out
+          rsync -a --exclude node_modules --exclude .git --exclude .env --exclude .next --exclude dist --exclude .turbo ./ /tmp/out/
+          cp /tmp/typecheck.log /tmp/build.log /tmp/out/ 2>/dev/null || true
+          if [ -n "${SRC_DIR:-}" ] && [ -d "$SRC_DIR/.github" ]; then cp -r "$SRC_DIR/.github" /tmp/out/; fi
+          rm -f /tmp/out/social-finder.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: social-finder-bootstrapped
+          path: /tmp/out
+          include-hidden-files: true
+
+      - name: Push ke branch bootstrap-output
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B bootstrap-output
+          git add -A
+          git commit -m "bootstrap: sinkronisasi dari social-finder.zip" || echo "tidak ada perubahan"
+          git push --force origin bootstrap-output
+
+  extended:
+    needs: bootstrap
+    if: ${{ inputs.extended }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: sf
+          POSTGRES_PASSWORD: sf
+          POSTGRES_DB: sf_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sf -d sf_test" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sf:sf@localhost:5432/sf_test
+      SESSION_SECRET: ci-secret-yang-cukup-panjang-1234567890
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: bootstrap-output
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @social-finder/database db:generate
+
+      - name: Migrasi pada database kosong
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+          echo "DATABASE_URL=$DATABASE_URL" > .env
+          echo "DATABASE_URL=$DATABASE_URL" > .env.test
+          pnpm db:deploy
+
+      - name: Tes integrasi (PostGIS asli)
+        id: integration
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pnpm --filter @social-finder/api test:integration 2>&1 | tee /tmp/integration.log
+
+      - name: E2E API (Playwright)
+        id: e2e
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pnpm db:seed
+          pnpm --filter @social-finder/web test:e2e 2>&1 | tee /tmp/e2e.log
+
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image Docker
+        id: docker
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          {
+            docker build --target web -t sf-web:ci .
+            docker build --target worker -t sf-worker:ci .
+            docker build --target migrate -t sf-migrate:ci .
+          } 2>&1 | tee /tmp/docker.log
+
+      - name: Smoke test web (image)
+        id: smoke
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          docker run -d --name sfweb --network host \
+            -e SESSION_SECRET="$SESSION_SECRET" -e DATABASE_URL="$DATABASE_URL" \
+            -e REDIS_URL=redis://127.0.0.1:6379 -e SMTP_URL=smtp://127.0.0.1:1025 \
+            -e APP_ORIGIN=http://localhost:3000 sf-web:ci
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /tmp/health.json -w "%{http_code}" http://127.0.0.1:3000/api/health || true)
+            echo "percobaan $i: HTTP $code"
+            if [ "$code" = "200" ] || [ "$code" = "503" ]; then cat /tmp/health.json; echo; exit 0; fi
+            sleep 2
+          done
+          docker logs sfweb 2>&1 | tail -50
+          exit 1
+
+      - name: Smoke test query Prisma di dalam image
+        id: prisma
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          # Mendaftar lalu login lewat image memastikan engine Prisma + argon2 ikut di bundel standalone.
+          # Redis tidak ada, jadi limiter gagal tertutup (500/429 wajar); yang diperiksa: BUKAN galat modul hilang.
+          curl -s -X POST http://127.0.0.1:3000/api/auth/register \
+            -H "Origin: http://localhost:3000" -H "Content-Type: application/json" \
+            -d '{"email":"smoke@example.com","username":"smoke_user","password":"smoke-password-123"}' -w "\nHTTP %{http_code}\n" | tee /tmp/prisma.log
+          docker logs sfweb 2>&1 | tail -40 | tee -a /tmp/prisma.log
+          ! grep -qiE "Cannot find module|query_engine|PrismaClientInitializationError|libssl" /tmp/prisma.log
+
+      - name: Ringkasan
+        if: always()
+        run: |
+          {
+            echo "## Hasil tes lanjutan"
+            echo "- integrasi: ${{ steps.integration.outcome }}"
+            echo "- e2e: ${{ steps.e2e.outcome }}"
+            echo "- build Docker: ${{ steps.docker.outcome }}"
+            echo "- smoke web: ${{ steps.smoke.outcome }}"
+            echo "- smoke Prisma/argon2 di image: ${{ steps.prisma.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for name in integration e2e docker prisma; do
+            if [ -f /tmp/$name.log ]; then
+              {
+                echo
+                echo "### Cuplikan $name (maks. 50 baris)"
+                echo '```'
+                sed 's/\x1b\[[0-9;]*m//g' /tmp/$name.log | grep -iE "fail|error|not ok|cannot|expected|received|HTTP [0-9]{3}|TS[0-9]{4}" | head -50
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extended-logs
+          path: /tmp/*.log
+          if-no-files-found: ignore
