@@ -16,6 +16,8 @@ Semua halaman memanggil API yang sama dengan klien lain (`apps/web/lib/client/ap
 | `/search` | Pencarian (kata kunci dan/atau radius), muat lebih banyak (cursor) | `/api/search` |
 | `/u/<username>` | Profil publik, blokir, laporkan | `/api/users/:username`, `/api/blocks`, `/api/reports` |
 | `/blocked` | Daftar blokir, buka blokir | `/api/blocks` |
+| `/dashboard` (bagian "Unduh data saya") | Ekspor data sendiri sebagai JSON, wajib password | `/api/me/export` |
+| `/moderation` | Antrean laporan untuk moderator (tanpa tautan navigasi; non-moderator melihat pesan netral) | `/api/mod/reports` |
 
 ## Keputusan yang disengaja
 
@@ -26,4 +28,4 @@ Semua halaman memanggil API yang sama dengan klien lain (`apps/web/lib/client/ap
 
 ## Belum ada
 
-Tes UI/e2e untuk halaman, desain visual yang matang (saat ini Tailwind netral dan fungsional), pengaturan bahasa, dan halaman moderasi laporan.
+Tes UI/e2e untuk halaman, desain visual yang matang (saat ini Tailwind netral dan fungsional), pengaturan bahasa, dan antrean moderasi yang matang (saat ini fungsional saja).

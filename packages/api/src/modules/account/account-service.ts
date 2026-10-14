@@ -4,7 +4,8 @@ import type { RequestContext } from "../auth/auth-service";
 import type { RateLimiter } from "../auth/rate-limit";
 import { hashIdentifier } from "../auth/tokens";
 import type { AuditEvent, AuditWriter, PasswordHasher } from "../auth/types";
-import type { AccountRepository } from "./types";
+import type { AccountExportDto } from "@social-finder/types";
+import type { AccountExportRecord, AccountRepository } from "./types";
 
 interface LimitRule {
   readonly limit: number;
@@ -16,6 +17,8 @@ export const ACCOUNT_LIMITS = {
   changePassword: { limit: 5, windowSec: 900 },
   /** Sesuai kontrak API: 3/jam. */
   deleteAccount: { limit: 3, windowSec: 3600 },
+  /** Ekspor berat dan memuat data pribadi: 3/jam per pengguna. */
+  exportData: { limit: 3, windowSec: 3600 },
 } as const satisfies Record<string, LimitRule>;
 
 /** Masa tunggu sebelum akun yang dihapus dihapus permanen oleh pekerjaan latar belakang. */
@@ -30,6 +33,51 @@ export interface AccountDeps {
   audit: AuditWriter;
   now: () => Date;
   hmacSecret: string;
+}
+
+export function toAccountExportDto(record: AccountExportRecord, now: Date): AccountExportDto {
+  return {
+    exportedAt: now.toISOString(),
+    account: {
+      email: record.email,
+      username: record.username,
+      emailVerified: record.emailVerifiedAt !== null,
+      createdAt: record.createdAt.toISOString(),
+    },
+    profile: record.profile
+      ? { displayName: record.profile.displayName, bio: record.profile.bio, avatarUrl: record.profile.avatarUrl }
+      : { displayName: record.username, bio: null, avatarUrl: null },
+    privacy: record.privacy ?? {
+      isDiscoverable: false,
+      searchableByUsername: true,
+      showPlatforms: true,
+      locationVisibility: "PRIVATE",
+    },
+    location: record.location
+      ? {
+          isEnabled: record.location.isEnabled,
+          accuracyLevel: record.location.accuracyLevel,
+          areaLabel: record.location.areaLabel,
+          cityLabel: record.location.cityLabel,
+          discoverableRadiusKm: Math.round(record.location.discoverableRadiusM / 1000),
+          updatedAt: record.location.updatedAt.toISOString(),
+        }
+      : null,
+    socialAccounts: record.socialAccounts.map((a) => ({
+      platform: a.platformKey,
+      username: a.username,
+      profileUrl: a.profileUrl,
+      isVerified: a.isVerified,
+      isDiscoverable: a.isDiscoverable,
+    })),
+    blocks: record.blocks.map((b) => ({ username: b.username, blockedAt: b.createdAt.toISOString() })),
+    reportsMade: record.reportsMade.map((r) => ({
+      reason: r.reason,
+      status: r.status,
+      details: r.details,
+      createdAt: r.createdAt.toISOString(),
+    })),
+  };
 }
 
 export class AccountService {
@@ -65,6 +113,19 @@ export class AccountService {
     await this.verifyPassword(userId, password);
     await this.deps.repository.markDeleted(userId, this.deps.now());
     await this.audit(ctx, userId, "account.delete");
+  }
+
+  /**
+   * Ekspor data milik sendiri. Wajib password (data pribadi lengkap, termasuk email). Koordinat tidak
+   * ikut: yang tersimpan hanya titik yang sudah dibulatkan ke grid, dan itu pun tidak diberikan.
+   */
+  async exportData(userId: string, password: string, ctx: RequestContext): Promise<AccountExportDto> {
+    await this.enforce(`account:export:${userId}`, ACCOUNT_LIMITS.exportData);
+    await this.verifyPassword(userId, password);
+    const record = await this.deps.repository.loadExport(userId);
+    if (!record) throw new AppError("NOT_FOUND", "Akun tidak ditemukan");
+    await this.audit(ctx, userId, "account.export");
+    return toAccountExportDto(record, this.deps.now());
   }
 
   /** Dipanggil pekerjaan terjadwal (worker). Mengembalikan jumlah akun yang dihapus permanen. */

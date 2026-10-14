@@ -22,6 +22,8 @@ export interface SearchCandidate {
   displayName: string;
   status: "ACTIVE" | "SUSPENDED" | "PENDING_DELETION";
   deleted: boolean;
+  /** Email pemilik sudah diverifikasi. Akun yang belum, tidak boleh ditemukan (anti akun sekali pakai). */
+  emailVerified: boolean;
   isDiscoverable: boolean;
   searchableByUsername: boolean;
   showPlatforms: boolean;
@@ -48,6 +50,8 @@ export interface SearchCriteria {
    */
   query: { text: string; mode: SearchMode; includeHandles: boolean } | null;
   platformKey: string | null;
+  /** Hanya pengguna dengan email terverifikasi yang boleh muncul. Default produksi: true. */
+  requireVerifiedEmail: boolean;
   /** Meter. Null bila bukan pencarian radius. */
   radiusM: number | null;
   sort: SearchSort;
@@ -71,9 +75,15 @@ export interface SearchLogEntry {
 /** Semua method menerima `searcherId` dari SESI, tidak pernah dari input klien. */
 export interface SearchRepository {
   search(criteria: SearchCriteria): Promise<SearchCandidate[]>;
-  findByUsername(searcherId: string, normalizedUsername: string): Promise<SearchCandidate | null>;
+  findByUsername(
+    searcherId: string,
+    normalizedUsername: string,
+    requireVerifiedEmail: boolean,
+  ): Promise<SearchCandidate | null>;
   /** Pencari punya lokasi aktif (dibutuhkan untuk pencarian jarak). */
   hasEnabledLocation(searcherId: string): Promise<boolean>;
+  /** Email pengguna ini sudah diverifikasi. Pencari tanpa verifikasi tidak boleh mencari. */
+  isEmailVerified(userId: string): Promise<boolean>;
   logSearch(entry: SearchLogEntry): Promise<void>;
   /** Jumlah catatan pencarian oleh pencari ini dalam `windowSec` detik terakhir (termasuk yang baru dicatat). */
   countRecentSearches(searcherId: string, windowSec: number): Promise<number>;

@@ -10,6 +10,8 @@ import Redis from "ioredis";
 import { getEnv } from "./env";
 
 const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+/** Idle: sesi yang tidak dipakai 3 hari berakhir (umur mutlak tetap 14 hari). */
+const SESSION_IDLE_MS = 3 * 24 * 60 * 60 * 1000;
 
 let limiter: RateLimiter | undefined;
 
@@ -43,7 +45,13 @@ export function getAuthService(): AuthService {
       limiter: getRateLimiter(),
       audit: prismaAuditWriter,
       now: () => new Date(),
-      config: { sessionTtlMs: SESSION_TTL_MS, hmacSecret: env.sessionSecret },
+      config: { sessionTtlMs: SESSION_TTL_MS, sessionIdleMs: SESSION_IDLE_MS, hmacSecret: env.sessionSecret },
+      // Pencarian butuh email terverifikasi: kirim tautan verifikasi otomatis saat akun dibuat.
+      // Impor dinamis menghindari siklus (recovery.ts mengimpor getRateLimiter dari berkas ini).
+      onRegistered: async (userId, ctx) => {
+        const { getRecoveryService } = await import("./recovery");
+        await getRecoveryService().requestEmailVerification(userId, ctx);
+      },
     });
   }
   return service;

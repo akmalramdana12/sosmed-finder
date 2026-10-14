@@ -21,6 +21,8 @@
     "./safety/node": "./src/modules/safety/node.ts",
     "./account": "./src/modules/account/index.ts",
     "./account/node": "./src/modules/account/node.ts",
+    "./moderation": "./src/modules/moderation/index.ts",
+    "./moderation/node": "./src/modules/moderation/node.ts",
     "./maintenance": "./src/modules/maintenance/index.ts",
     "./maintenance/node": "./src/modules/maintenance/node.ts",
     "./recovery": "./src/modules/recovery/index.ts",

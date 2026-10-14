@@ -107,6 +107,22 @@ Memakai **username**, bukan id: DTO publik tidak pernah membawa id internal, jad
 - **Block** berlaku dua arah di pencarian dan profil publik (lihat Fase 8). `POST /blocks` idempotent. Memblokir diri sendiri → 400. Username tak ada / non-ACTIVE → respons sukses yang sama (tanpa enumerasi). Batas 500 blokir per pengguna.
 - **Report** `reason` ∈ SPAM, IMPERSONATION, HARASSMENT, INAPPROPRIATE_CONTENT, PRIVACY_VIOLATION, OTHER. `details` maks 1000 karakter (dibersihkan dari karakter kontrol/bidi); wajib ≥10 karakter bila `OTHER`. Satu laporan terbuka (OPEN/REVIEWING) per pasangan pelapor→target; mengulang tidak menambah antrean. Laporan **tidak** punya efek otomatis pada target (tanpa auto-suspend). Audit hanya mencatat alasan, bukan isi laporan.
 
+## Ekspor data
+
+`POST /me/export {password}` → `{ data: AccountExportDto }` (`Content-Disposition: attachment`). POST dan wajib password karena memuat email dan data pribadi; 3/jam per pengguna; password salah → 400. Isi: akun (email, username, status verifikasi), profil, privasi, label lokasi + akurasi + radius (**tanpa koordinat**), akun sosmed, daftar blokir, laporan yang dibuat. Tidak ada: hash password, sesi, token, id internal, catatan moderasi, laporan terhadap pengguna, audit, riwayat pencarian.
+
+## Moderasi (hanya peran MODERATOR)
+
+Peran dibaca dari database tiap permintaan; bukan moderator = `404` identik dengan rute yang tidak ada.
+Batas: 120/menit (baca), 60/menit (tindakan). Detail: `docs/setup/12-moderation.md`.
+
+- `GET /mod/reports?status=OPEN|REVIEWING|RESOLVED|DISMISSED&limit=1..50&cursor=` → `{ data: ModerationReportDto[], nextCursor }`, terlama dulu. Tanpa identitas pelapor, email, atau lokasi.
+- `POST /mod/reports/:id {action: review|dismiss|resolve|suspend|reinstate, note?}` → `{ data: ModerationReportDto }`. `suspend`/`reinstate` wajib `note` ≥5 karakter. `409` bila status berubah (moderator lain lebih dulu) atau transisi tidak valid; `403` bila target adalah moderator.
+
+## Verifikasi email di pencarian
+
+`GET /search` dan `GET /users/:username` mengembalikan `403` bila email pencari belum terverifikasi. Akun yang emailnya belum terverifikasi tidak muncul sebagai hasil dan profilnya `404`.
+
 ## Catatan caching
 
 Semua respons API `Cache-Control: no-store`, kecuali daftar platform publik. Bila nanti ada cache hasil pencarian di sisi server, wajib di-invalidate saat privacy, lokasi, social account, atau block berubah.

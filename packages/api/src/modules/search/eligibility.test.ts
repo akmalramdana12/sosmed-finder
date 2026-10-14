@@ -227,3 +227,14 @@ describe("evaluateCandidate: tidak ada kebocoran data internal", () => {
     }
   });
 });
+
+describe("evaluateCandidate: email terverifikasi", () => {
+  it("akun yang emailnya belum diverifikasi ditolak (default gagal tertutup)", () => {
+    expect(reason(candidate({ emailVerified: false }))).toBe("email-unverified");
+    expect(reason(candidate({ emailVerified: false }), { requireVerifiedEmail: true })).toBe("email-unverified");
+  });
+  it("hanya requireVerifiedEmail=false yang melonggarkan", () => {
+    expect(reason(candidate({ emailVerified: false }), { requireVerifiedEmail: false })).toBe("ok");
+    expect(reason(candidate({ emailVerified: true }))).toBe("ok");
+  });
+});

@@ -17,6 +17,12 @@ enum UserStatus {
   PENDING_DELETION
 }
 
+/// Peran dikelola LANGSUNG di database (tidak ada API untuk mengubahnya): lihat docs/setup/12-moderation.md.
+enum UserRole {
+  USER
+  MODERATOR
+}
+
 enum LocationVisibility {
   PRIVATE
   AREA_ONLY
@@ -63,6 +69,7 @@ model User {
   /// = lower(username) (dipaksa CHECK di extras.sql); dipakai untuk keunikan dan pencarian.
   normalizedUsername String     @unique
   status             UserStatus @default(ACTIVE)
+  role               UserRole   @default(USER)
   /// Soft-delete: akun langsung hilang dari search; hard-delete oleh worker.
   deletedAt          DateTime?  @db.Timestamptz(3)
   createdAt          DateTime   @default(now()) @db.Timestamptz(3)
@@ -78,6 +85,7 @@ model User {
   blocksReceived     Block[]             @relation("Blocked")
   reportsMade        Report[]            @relation("Reporter")
   reportsReceived    Report[]            @relation("ReportTarget")
+  reportsReviewed    Report[]            @relation("ReportReviewer")
   auditLogs          AuditLog[]
   searchLogs         SearchLog[]
   notifications      Notification[]
@@ -191,8 +199,13 @@ model Report {
   status       ReportStatus @default(OPEN)
   createdAt    DateTime     @default(now()) @db.Timestamptz(3)
   resolvedAt   DateTime?    @db.Timestamptz(3)
+  /// Moderator terakhir yang menindaklanjuti; null bila akunnya dihapus.
+  reviewedById  String?     @db.Uuid
+  /// Catatan internal moderator. Tidak pernah dikirim ke pelapor maupun target.
+  moderatorNote String?     @db.VarChar(1000)
 
   reporter User? @relation("Reporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  reviewer User? @relation("ReportReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   target   User  @relation("ReportTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
 
   @@index([status, createdAt])
@@ -209,6 +222,9 @@ model Session {
   userAgent  String?   @db.VarChar(255)
   revokedAt  DateTime? @db.Timestamptz(3)
   createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  /// Aktivitas terakhir (diperbarui paling sering sekali per 5 menit). Sesi yang menganggur lebih lama
+  /// dari batas idle tidak valid lagi, walau belum mencapai expiresAt.
+  lastSeenAt DateTime  @default(now()) @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

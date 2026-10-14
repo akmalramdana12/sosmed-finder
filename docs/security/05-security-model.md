@@ -13,7 +13,7 @@ Tabel di bawah adalah rencana kontrol. Kolom ini memisahkan yang **sudah ada dan
 | --- | --- |
 | argon2id, min 12 karakter | Ada. Cek password bocor: **belum** |
 | Sesi acak 256-bit, hash di DB, cookie HttpOnly/SameSite (`__Host-` + Secure di production), sesi baru tiap login | Ada |
-| Timeout sesi | Hanya absolut 14 hari. **Idle timeout belum ada** |
+| Timeout sesi | Absolut 14 hari + idle 3 hari (sliding; `Session.lastSeenAt` diperbarui paling sering tiap 5 menit; migrasi `20261013000000_session_idle`) |
 | Cabut semua sesi saat ganti password | Ada (`POST /api/me/password`; pengguna harus login ulang) |
 | Brute force: batas per IP + per akun, waktu respons seragam | Ada. Lockout/backoff progresif: **belum** (fixed window) |
 | Anti-enumerasi (register/login, 404 seragam, block/report seragam) | Ada |
@@ -28,7 +28,8 @@ Tabel di bawah adalah rencana kontrol. Kolom ini memisahkan yang **sudah ada dan
 | Ekspor data pengguna | **Belum ada** |
 | Reset password, verifikasi email | Ada (`modules/recovery`): token acak 256-bit, hanya hash di DB, sekali pakai (klaim atomik), 30 mnt/24 jam, tautan memakai fragmen `#token=` (tidak masuk log server/Referer), respons seragam, batas per IP dan per email (tanpa memandang terdaftar/tidak), reset mencabut semua sesi, argon2 tidak dihitung untuk token sampah, email dikirim di latar belakang. **Belum teruji dengan SMTP dan Prisma asli**; halaman UI `/forgot-password`, `/reset-password`, `/verify-email` ada (token dibaca dari fragmen lalu dihapus dari bilah alamat) tetapi belum dirender di Next asli; verifikasi email **belum menggerbangi fitur apa pun** (keputusan produk) |
 | Deteksi scraping | Penanda saja: ≥120 pencarian/jam → audit `search.suspicious` (sekali/jam). Tanpa pemblokiran otomatis dan **tanpa pemeriksa** (belum ada UI/alert) |
-| Moderasi laporan | **Belum ada** antarmuka/peran moderator (butuh keputusan produk + perubahan skema) |
+| Moderasi laporan | Ada: peran `MODERATOR` (hanya lewat SQL), `/api/mod/*`, `/moderation`; lihat `docs/setup/12-moderation.md` |
+| Verifikasi email di pencarian | Ada: pencari dan hasil wajib terverifikasi; `REQUIRE_VERIFIED_EMAIL=false` ditolak di production |
 | Audit dependensi, pembaruan otomatis | CI `pnpm audit` + Dependabot (belum pernah berjalan) |
 | Pemindaian secret di CI, 2FA, pemberitahuan login baru | **Belum ada** |
 
@@ -65,7 +66,7 @@ Penghapusan: `DELETE /api/me` (password + `confirm: "DELETE"`) = soft-delete ins
 
 ## Abuse & moderasi
 
-Report → antrean review (OPEN/REVIEWING); satu laporan terbuka per pasangan, 10/jam dan 30/hari per pelapor. **Tidak ada auto-suspend** otomatis dari jumlah laporan: laporan massal bisa dipakai untuk membungkam orang, jadi efek hanya lewat peninjauan manusia (antarmuka moderator belum ada). Isi laporan (teks bebas) tidak pernah dicatat di audit/log. Deteksi pola scraping: hanya penanda audit (`search.suspicious`), ditinjau manual; tidak memblokir otomatis.
+Report → antrean review (OPEN/REVIEWING); satu laporan terbuka per pasangan, 10/jam dan 30/hari per pelapor. **Tidak ada auto-suspend** otomatis dari jumlah laporan: laporan massal bisa dipakai untuk membungkam orang, jadi efek hanya lewat peninjauan manusia lewat antarmuka moderator (`docs/setup/12-moderation.md`): peran dibaca dari DB tiap permintaan, bukan moderator = 404, tindakan atomik dengan compare-and-set, suspend mencabut sesi dan wajib bercatatan, semua tindakan diaudit tanpa isi catatan. Isi laporan (teks bebas) tidak pernah dicatat di audit/log. Deteksi pola scraping: hanya penanda audit (`search.suspicious`), ditinjau manual; tidak memblokir otomatis.
 
 ## Pengujian keamanan (wajib)
 

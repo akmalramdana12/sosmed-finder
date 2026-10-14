@@ -23,8 +23,14 @@ export const AUTH_LIMITS = {
   loginPerAccount: { limit: 10, windowSec: 900 },
 } as const satisfies Record<string, LimitRule>;
 
+/** Pembaruan lastSeenAt paling sering sekali per interval ini: tidak menulis ke DB di setiap request. */
+export const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
+
 export interface AuthConfig {
+  /** Umur mutlak sesi sejak login. */
   sessionTtlMs: number;
+  /** Sesi tanpa aktivitas selama ini tidak valid lagi (wajib; harus > interval sentuh). */
+  sessionIdleMs: number;
   /** Secret untuk HMAC IP dan key rate limit. Minimal 32 karakter. */
   hmacSecret: string;
 }
@@ -37,6 +43,11 @@ export interface AuthDeps {
   audit: AuditWriter;
   now: () => Date;
   config: AuthConfig;
+  /**
+   * Dipanggil (tanpa ditunggu) setelah akun BARU dibuat, mis. untuk mengirim email verifikasi.
+   * Tidak dipanggil untuk email yang sudah terdaftar. Kegagalannya tidak boleh memengaruhi respons.
+   */
+  onRegistered?: (userId: string, ctx: RequestContext) => Promise<void>;
 }
 
 export interface RequestContext {
@@ -116,6 +127,7 @@ export class AuthService {
         entityId: created.id,
         ipHash,
       });
+      this.notifyRegistered(created.id, ctx);
     } catch (error) {
       if (error instanceof UniqueViolationError) {
         if (error.field === "username") {
@@ -161,6 +173,7 @@ export class AuthService {
       expiresAt,
       ipHash,
       userAgent: ctx.userAgent?.slice(0, 255) ?? null,
+      lastSeenAt: this.deps.now(),
     });
     await this.audit({
       action: "auth.login.success",
@@ -195,11 +208,39 @@ export class AuthService {
     if (record.revokedAt !== null) return null;
     if (record.expiresAt.getTime() <= this.deps.now().getTime()) return null;
     if (record.userStatus !== "ACTIVE" || record.userDeletedAt !== null) return null;
+    const now = this.deps.now().getTime();
+    const idleFor = now - record.lastSeenAt.getTime();
+    // Menganggur terlalu lama: tidak valid dan dicabut (best-effort) supaya tidak bisa "dihidupkan" lagi.
+    if (idleFor > this.deps.config.sessionIdleMs) {
+      await this.bestEffort(() => this.deps.sessions.revoke(hashToken(token), this.deps.now()));
+      return null;
+    }
+    if (idleFor >= SESSION_TOUCH_INTERVAL_MS) {
+      await this.bestEffort(() => this.deps.sessions.touch(record.id, this.deps.now()));
+    }
     return { userId: record.userId, sessionId: record.id };
+  }
+
+  /** Kegagalan menulis aktivitas tidak boleh menggagalkan request yang sah. */
+  private async bestEffort(action: () => Promise<void>): Promise<void> {
+    try {
+      await action();
+    } catch {
+      console.error(JSON.stringify({ level: "error", msg: "session activity write failed" }));
+    }
   }
 
   private ipHash(ctx: RequestContext): string {
     return hashIdentifier(ctx.ip, this.deps.config.hmacSecret);
+  }
+
+  /** Fire-and-forget: tidak menambah latensi dan kegagalannya tidak terlihat dari respons (anti-enumerasi). */
+  private notifyRegistered(userId: string, ctx: RequestContext): void {
+    const hook = this.deps.onRegistered;
+    if (!hook) return;
+    void hook(userId, ctx).catch(() => {
+      console.error(JSON.stringify({ level: "error", msg: "post-register hook failed" }));
+    });
   }
 
   private async enforce(key: string, rule: LimitRule): Promise<void> {

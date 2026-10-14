@@ -64,6 +64,7 @@ export class PrismaSessionRepository implements SessionRepository {
         expiresAt: session.expiresAt,
         ipHash: session.ipHash,
         userAgent: session.userAgent,
+        lastSeenAt: session.lastSeenAt,
       },
       select: { id: true },
     });
@@ -77,6 +78,7 @@ export class PrismaSessionRepository implements SessionRepository {
         userId: true,
         expiresAt: true,
         revokedAt: true,
+        lastSeenAt: true,
         user: { select: { status: true, deletedAt: true } },
       },
     });
@@ -86,6 +88,7 @@ export class PrismaSessionRepository implements SessionRepository {
       userId: row.userId,
       expiresAt: row.expiresAt,
       revokedAt: row.revokedAt,
+      lastSeenAt: row.lastSeenAt,
       userStatus: row.user.status,
       userDeletedAt: row.user.deletedAt,
     };
@@ -96,6 +99,10 @@ export class PrismaSessionRepository implements SessionRepository {
       where: { tokenHash, revokedAt: null },
       data: { revokedAt: at },
     });
+  }
+
+  async touch(sessionId: string, at: Date): Promise<void> {
+    await prisma.session.updateMany({ where: { id: sessionId, revokedAt: null }, data: { lastSeenAt: at } });
   }
 
   async revokeAllForUser(userId: string, at: Date): Promise<void> {

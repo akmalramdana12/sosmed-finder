@@ -20,6 +20,7 @@ class FakeRepository implements SearchRepository {
   rows: SearchCandidate[] = [];
   profile: SearchCandidate | null = null;
   hasLocation = true;
+  searcherVerified = true;
   failLog = false;
   recentCount = 0;
   failCount = false;
@@ -31,7 +32,12 @@ class FakeRepository implements SearchRepository {
     this.criteria.push(criteria);
     return this.rows;
   }
-  async findByUsername(searcherId: string, normalizedUsername: string) {
+  readonly profileRequireVerified: boolean[] = [];
+  async isEmailVerified(): Promise<boolean> {
+    return this.searcherVerified;
+  }
+  async findByUsername(searcherId: string, normalizedUsername: string, requireVerifiedEmail: boolean) {
+    this.profileRequireVerified.push(requireVerifiedEmail);
     this.profileLookups.push([searcherId, normalizedUsername]);
     return this.profile;
   }
@@ -359,5 +365,43 @@ describe("SearchService: deteksi pola scraping", () => {
     repository.failCount = true;
     const result = await service.search(ME, BY_NAME);
     expect(result.data.length).toBe(1);
+  });
+});
+
+describe("verifikasi email", () => {
+  it("pencari belum terverifikasi: FORBIDDEN dan repositori tidak dipanggil", async () => {
+    const { service, repository } = setup();
+    repository.searcherVerified = false;
+    await expect(service.search(ME, { q: "alex", mode: "prefix", limit: 10 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(service.getPublicProfile(ME, "alex")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(repository.criteria).toHaveLength(0);
+    expect(repository.profileLookups).toHaveLength(0);
+  });
+
+  it("kriteria dan lookup profil memaksa target terverifikasi secara default", async () => {
+    const { service, repository } = setup();
+    repository.rows = [candidate()];
+    await service.search(ME, { q: "alex", mode: "prefix", limit: 10 });
+    expect(repository.criteria[0]?.requireVerifiedEmail).toBe(true);
+    repository.profile = candidate();
+    await service.getPublicProfile(ME, "alex");
+    expect(repository.profileRequireVerified).toEqual([true]);
+  });
+
+  it("baris tak terverifikasi yang lolos dari SQL tetap ditolak oleh guard service", async () => {
+    const { service, repository } = setup();
+    repository.rows = [candidate({ emailVerified: false })];
+    const result = await service.search(ME, { q: "alex", mode: "prefix", limit: 10 });
+    expect(result.data).toHaveLength(0);
+  });
+
+  it("requireVerifiedEmail=false: tidak ada pengecekan pencari, filter dimatikan", async () => {
+    const repository = new FakeRepository();
+    repository.searcherVerified = false;
+    repository.rows = [candidate({ emailVerified: false })];
+    const service = new SearchService({ repository, limiter: new MemoryRateLimiter(), hmacSecret: SECRET, requireVerifiedEmail: false });
+    const result = await service.search(ME, { q: "alex", mode: "prefix", limit: 10 });
+    expect(repository.criteria[0]?.requireVerifiedEmail).toBe(false);
+    expect(result.data).toHaveLength(1);
   });
 });

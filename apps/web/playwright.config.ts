@@ -21,6 +21,9 @@ export default defineConfig({
         env: {
           SESSION_SECRET: process.env["SESSION_SECRET"] ?? "e2e-secret-yang-cukup-panjang-1234567890",
           APP_ORIGIN: "http://localhost:3000",
+          // E2E tidak punya kotak surat: akun uji tidak bisa memverifikasi email. Gating verifikasi
+          // diuji di unit test dan tes integrasi (PostGIS asli); di production nilai ini dipaksa true.
+          REQUIRE_VERIFIED_EMAIL: "false",
         },
       },
 });

@@ -8,6 +8,7 @@ const envSchema = z.object({
   TRUST_PROXY: z.string().optional(),
   SMTP_URL: z.string().min(1).optional(),
   MAIL_FROM: z.string().min(3).optional(),
+  REQUIRE_VERIFIED_EMAIL: z.enum(["true", "false"]).optional(),
 });
 
 export interface AppEnv {
@@ -23,6 +24,8 @@ export interface AppEnv {
   /** URL SMTP (smtps://user:pass@host:465). Kosong hanya di development. */
   smtpUrl: string | undefined;
   mailFrom: string;
+  /** Pencari dan hasil pencarian wajib berakun terverifikasi. Selalu true di production. */
+  requireVerifiedEmail: boolean;
 }
 
 export function loadEnv(source: Record<string, string | undefined> = process.env): AppEnv {
@@ -33,6 +36,9 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
   }
   if (isProduction && !parsed.SMTP_URL) {
     throw new Error("SMTP_URL wajib di production: reset password dan verifikasi email dikirim lewat email");
+  }
+  if (isProduction && parsed.REQUIRE_VERIFIED_EMAIL === "false") {
+    throw new Error("REQUIRE_VERIFIED_EMAIL=false tidak diizinkan di production");
   }
   const allowedOrigins = parsed.APP_ORIGIN.split(",")
     .map((value) => value.trim())
@@ -46,6 +52,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     publicOrigin: allowedOrigins[0] ?? "http://localhost:3000",
     smtpUrl: parsed.SMTP_URL,
     mailFrom: parsed.MAIL_FROM ?? "Social Finder <no-reply@localhost>",
+    requireVerifiedEmail: parsed.REQUIRE_VERIFIED_EMAIL !== "false",
     trustProxy: parsed.TRUST_PROXY === "true",
     secureCookies: isProduction,
   };

@@ -47,4 +47,19 @@ describe("loadEnv", () => {
     expect(loadEnv({ SESSION_SECRET: SECRET }).trustProxy).toBe(false);
     expect(loadEnv({ SESSION_SECRET: SECRET, TRUST_PROXY: "true" }).trustProxy).toBe(true);
   });
+
+  it("REQUIRE_VERIFIED_EMAIL: default true, boleh dimatikan di luar production, dilarang di production", () => {
+    expect(loadEnv({ SESSION_SECRET: SECRET }).requireVerifiedEmail).toBe(true);
+    expect(loadEnv({ SESSION_SECRET: SECRET, REQUIRE_VERIFIED_EMAIL: "false" }).requireVerifiedEmail).toBe(false);
+    expect(() => loadEnv({ SESSION_SECRET: SECRET, REQUIRE_VERIFIED_EMAIL: "iya" })).toThrow();
+    expect(() =>
+      loadEnv({
+        NODE_ENV: "production",
+        SESSION_SECRET: SECRET,
+        REDIS_URL: "redis://localhost:6379",
+        SMTP_URL: "smtps://u:p@h:465",
+        REQUIRE_VERIFIED_EMAIL: "false",
+      }),
+    ).toThrow();
+  });
 });

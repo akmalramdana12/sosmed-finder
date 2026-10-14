@@ -7,6 +7,7 @@ const BASE: SearchCriteria = {
   searcherId: ME,
   query: null,
   platformKey: null,
+  requireVerifiedEmail: true,
   radiusM: null,
   sort: "username",
   fetchLimit: 21,
@@ -159,5 +160,14 @@ describe("buildSearchQuery", () => {
     const accountsAt = text.indexOf(`AS "accounts"`);
     expect(limitAt).toBeGreaterThan(-1);
     expect(accountsAt).toBeGreaterThan(limitAt);
+  });
+
+  it("requireVerifiedEmail: filter email terverifikasi hanya bila diminta; bendera selalu dipilih", () => {
+    const strict = buildSearchQuery({ ...BASE, requireVerifiedEmail: true }).text;
+    const loose = buildSearchQuery({ ...BASE, requireVerifiedEmail: false }).text;
+    const count = (text: string) => text.split('u."emailVerifiedAt" IS NOT NULL').length - 1;
+    expect(count(strict)).toBe(2); // kolom "emailVerified" + filter WHERE
+    expect(count(loose)).toBe(1); // hanya kolom, untuk dicek ulang oleh evaluateCandidate
+    expect(strict).toContain('AS "emailVerified"');
   });
 });

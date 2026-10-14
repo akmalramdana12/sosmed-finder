@@ -31,7 +31,7 @@ export function RegisterForm() {
     return (
       <div className="space-y-4">
         <Notice kind="success">
-          Pendaftaran diproses. Silakan masuk dengan email dan password Anda.
+          Pendaftaran diproses. Kami mengirim tautan verifikasi ke email Anda (berlaku 24 jam); verifikasi dulu agar bisa memakai pencarian. Lalu masuk dengan email dan password Anda.
         </Notice>
         <p className="text-sm">
           <TextLink href="/login">Ke halaman masuk</TextLink>

@@ -14,6 +14,8 @@ export interface EvaluationRules {
    */
   allowHandleMatch?: boolean;
   platformKey: string | null;
+  /** Default true (gagal tertutup): akun yang emailnya belum diverifikasi ditolak. Hanya `false` yang melonggarkan. */
+  requireVerifiedEmail?: boolean;
   /** Radius pencarian dalam km; null bila bukan pencarian radius. */
   radiusKm: number | null;
 }
@@ -21,6 +23,7 @@ export interface EvaluationRules {
 export type RejectReason =
   | "self"
   | "inactive"
+  | "email-unverified"
   | "not-discoverable"
   | "blocked"
   | "no-discoverable-account"
@@ -54,6 +57,7 @@ function toAccountDto(account: CandidateAccount): SearchAccountDto {
 export function evaluateCandidate(candidate: SearchCandidate, rules: EvaluationRules): Evaluation {
   if (candidate.userId === rules.searcherId) return deny("self");
   if (candidate.status !== "ACTIVE" || candidate.deleted) return deny("inactive");
+  if (rules.requireVerifiedEmail !== false && !candidate.emailVerified) return deny("email-unverified");
   if (!candidate.isDiscoverable) return deny("not-discoverable");
   if (candidate.blockedEitherWay) return deny("blocked");
 

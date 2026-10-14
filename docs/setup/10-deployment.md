@@ -77,5 +77,5 @@ Angka ada di `RETENTION` (`packages/api/src/modules/maintenance/maintenance-serv
 
 1. ~~Worker kerangka~~ **Sudah ditulis** (modul `maintenance` + worker BullMQ, lihat di bawah), tetapi baru teruji di tingkat unit; belum dijalankan terhadap Redis/BullMQ/Postgres asli. Verifikasi di staging: buat akun, hapus, mundurkan `deletedAt` 31 hari lewat SQL, jalankan job, pastikan baris hilang.
 2. Reset password dan verifikasi email: API sudah ada, tetapi butuh `SMTP_URL` + `MAIL_FROM` (wajib di production), halaman UI belum ada, dan belum diuji dengan SMTP asli. Verifikasi email belum menggerbangi fitur apa pun.
-3. Tooling moderasi laporan belum ada (laporan masuk tetapi tak ada yang menanganinya).
+3. Moderasi laporan sudah ada (`12-moderation.md`): beri peran moderator lewat SQL sebelum peluncuran dan pastikan SMTP berfungsi (pencarian butuh email terverifikasi).
 4. Semua yang bertanda BELUM di tabel di atas, terutama build Docker pertama, migrasi, dan tes yang belum pernah dijalankan (integrasi block/location, e2e Playwright).

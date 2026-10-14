@@ -78,6 +78,7 @@ class FakeSessions implements SessionRepository {
       userId: row.userId,
       expiresAt: row.expiresAt,
       revokedAt: row.revokedAt,
+      lastSeenAt: row.lastSeenAt,
       userStatus: user.status,
       userDeletedAt: user.deletedAt,
     };
@@ -86,6 +87,14 @@ class FakeSessions implements SessionRepository {
   async revoke(tokenHash: string, at: Date): Promise<void> {
     for (const row of this.rows) {
       if (row.tokenHash === tokenHash && row.revokedAt === null) row.revokedAt = at;
+    }
+  }
+
+  touches = 0;
+  async touch(sessionId: string, at: Date): Promise<void> {
+    this.touches += 1;
+    for (const row of this.rows) {
+      if (row.id === sessionId && row.revokedAt === null) row.lastSeenAt = at;
     }
   }
 
@@ -113,6 +122,7 @@ class FakeHasher implements PasswordHasher {
 
 const SECRET = "test-secret-test-secret-test-secret-123";
 const TTL_MS = 14 * 24 * 60 * 60 * 1000;
+const IDLE_MS = 3 * 24 * 60 * 60 * 1000;
 const PASSWORD = "correct-horse-battery";
 const CTX = { ip: "203.0.113.7", userAgent: "vitest" };
 
@@ -131,7 +141,7 @@ function setup() {
       events.push(event);
     },
     now: () => clock.value,
-    config: { sessionTtlMs: TTL_MS, hmacSecret: SECRET },
+    config: { sessionTtlMs: TTL_MS, sessionIdleMs: IDLE_MS, hmacSecret: SECRET },
   });
   return { service, users, sessions, hasher, events, clock };
 }
@@ -139,6 +149,32 @@ function setup() {
 async function registerAlex(service: AuthService): Promise<void> {
   await service.register({ email: "alex@example.com", username: "Alex", password: PASSWORD }, CTX);
 }
+
+describe("onRegistered", () => {
+  it("dipanggil untuk akun baru saja; gagal tidak memengaruhi pendaftaran", async () => {
+    const calls: string[] = [];
+    const users = new FakeUsers();
+    const service = new AuthService({
+      users,
+      sessions: new FakeSessions(users),
+      hasher: new FakeHasher(),
+      limiter: new MemoryRateLimiter(),
+      audit: async () => {},
+      now: () => new Date("2026-01-01T00:00:00.000Z"),
+      config: { sessionTtlMs: TTL_MS, sessionIdleMs: IDLE_MS, hmacSecret: SECRET },
+      onRegistered: async (userId) => {
+        calls.push(userId);
+        throw new Error("smtp down");
+      },
+    });
+    await service.register({ email: "alex@example.com", username: "Alex", password: PASSWORD }, CTX);
+    // email yang sama lagi: tidak ada pemanggilan kedua
+    await service.register({ email: "alex@example.com", username: "other_name", password: PASSWORD }, CTX);
+    await Promise.resolve();
+    expect(users.rows).toHaveLength(1);
+    expect(calls).toEqual([users.rows[0]?.id]);
+  });
+});
 
 describe("register", () => {
   it("membuat user dengan password ter-hash dan username ternormalisasi", async () => {
@@ -270,11 +306,67 @@ describe("sesi", () => {
     await registerAlex(service);
     const { token } = await service.login({ email: "alex@example.com", password: PASSWORD }, CTX);
 
-    clock.value = new Date(clock.value.getTime() + TTL_MS - 1000);
+    // Sesi dipakai tiap 2 hari (di bawah batas idle 3 hari) sampai hari ke-12.
+    const day = 24 * 60 * 60 * 1000;
+    for (let i = 0; i < 6; i += 1) {
+      clock.value = new Date(clock.value.getTime() + 2 * day);
+      expect(await service.validateSession(token)).not.toBeNull();
+    }
+    const start = clock.value.getTime() - 12 * day;
+    clock.value = new Date(start + TTL_MS - 1000);
     expect(await service.validateSession(token)).not.toBeNull();
 
     clock.value = new Date(clock.value.getTime() + 2000);
     expect(await service.validateSession(token)).toBeNull();
+  });
+
+  it("idle: sesi yang menganggur lewat batas ditolak dan dicabut", async () => {
+    const { service, clock, sessions } = setup();
+    await registerAlex(service);
+    const { token } = await service.login({ email: "alex@example.com", password: PASSWORD }, CTX);
+    clock.value = new Date(clock.value.getTime() + IDLE_MS + 1000);
+    expect(await service.validateSession(token)).toBeNull();
+    expect(sessions.rows[0]?.revokedAt).not.toBeNull();
+    // tetap ditolak walau waktu mundur: sudah dicabut
+    clock.value = new Date(clock.value.getTime() - IDLE_MS);
+    expect(await service.validateSession(token)).toBeNull();
+  });
+
+  it("aktivitas menggeser batas idle (sliding), tetapi umur mutlak tetap berlaku", async () => {
+    const { service, clock } = setup();
+    await registerAlex(service);
+    const { token } = await service.login({ email: "alex@example.com", password: PASSWORD }, CTX);
+    const day = 24 * 60 * 60 * 1000;
+    for (let i = 0; i < 4; i += 1) {
+      clock.value = new Date(clock.value.getTime() + 2 * day); // < idle 3 hari
+      expect(await service.validateSession(token)).not.toBeNull();
+    }
+    // total 8 hari: tanpa sliding sudah mati; dengan sliding masih hidup. Lewat 14 hari mutlak: mati.
+    clock.value = new Date(clock.value.getTime() + 2 * day);
+    expect(await service.validateSession(token)).not.toBeNull(); // hari ke-10
+    clock.value = new Date(clock.value.getTime() + 2 * day);
+    expect(await service.validateSession(token)).not.toBeNull(); // hari ke-12
+    clock.value = new Date(clock.value.getTime() + 2 * day);
+    expect(await service.validateSession(token)).toBeNull(); // hari ke-14: TTL mutlak
+  });
+
+  it("penulisan aktivitas dibatasi: tidak ada tulis di setiap request, dan kegagalannya tidak menggagalkan request", async () => {
+    const { service, clock, sessions } = setup();
+    await registerAlex(service);
+    const { token } = await service.login({ email: "alex@example.com", password: PASSWORD }, CTX);
+    for (let i = 0; i < 5; i += 1) {
+      clock.value = new Date(clock.value.getTime() + 30_000);
+      await service.validateSession(token);
+    }
+    expect(sessions.touches).toBe(0); // 2,5 menit < 5 menit
+    clock.value = new Date(clock.value.getTime() + 5 * 60_000);
+    await service.validateSession(token);
+    expect(sessions.touches).toBe(1);
+    sessions.touch = async () => {
+      throw new Error("db down");
+    };
+    clock.value = new Date(clock.value.getTime() + 10 * 60_000);
+    expect(await service.validateSession(token)).not.toBeNull();
   });
 
   it("logout mencabut sesi; logout tanpa token tidak error", async () => {

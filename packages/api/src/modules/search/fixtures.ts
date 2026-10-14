@@ -18,6 +18,7 @@ export function candidate(overrides: Partial<SearchCandidate> = {}): SearchCandi
     displayName: "Alex Doe",
     status: "ACTIVE",
     deleted: false,
+    emailVerified: true,
     isDiscoverable: true,
     searchableByUsername: true,
     showPlatforms: true,

@@ -23,6 +23,8 @@ export interface NewSession {
   expiresAt: Date;
   ipHash: string | null;
   userAgent: string | null;
+  /** Aktivitas terakhir; awalnya sama dengan waktu login. */
+  lastSeenAt: Date;
 }
 
 export interface SessionLookup {
@@ -30,6 +32,7 @@ export interface SessionLookup {
   userId: string;
   expiresAt: Date;
   revokedAt: Date | null;
+  lastSeenAt: Date;
   userStatus: UserStatus;
   userDeletedAt: Date | null;
 }
@@ -56,6 +59,8 @@ export interface SessionRepository {
   findByTokenHash(tokenHash: string): Promise<SessionLookup | null>;
   revoke(tokenHash: string, at: Date): Promise<void>;
   revokeAllForUser(userId: string, at: Date): Promise<void>;
+  /** Perbarui aktivitas terakhir. Tidak berefek pada sesi yang sudah dicabut. */
+  touch(sessionId: string, at: Date): Promise<void>;
 }
 
 export interface PasswordHasher {

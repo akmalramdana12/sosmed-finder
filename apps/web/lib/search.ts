@@ -13,6 +13,7 @@ export function getSearchService(): SearchService {
       limiter: getRateLimiter(),
       hmacSecret: getEnv().sessionSecret,
       audit: prismaAuditWriter,
+      requireVerifiedEmail: getEnv().requireVerifiedEmail,
     });
   }
   return service;

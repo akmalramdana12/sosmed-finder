@@ -24,3 +24,7 @@ export const deleteAccountSchema = z
   })
   .strict();
 export type DeleteAccountInput = z.infer<typeof deleteAccountSchema>;
+
+/** Ekspor memuat email dan seluruh data pribadi: wajib password, supaya sesi yang dibajak tidak cukup. */
+export const exportDataSchema = z.object({ password: z.string().min(1).max(128) }).strict();
+export type ExportDataInput = z.infer<typeof exportDataSchema>;

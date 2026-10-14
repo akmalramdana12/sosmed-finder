@@ -158,3 +158,27 @@ describe("integrasi: kebocoran, profil publik, catatan", () => {
     expect(rows.some((r) => r.line.includes("secretquery"))).toBe(false);
   });
 });
+
+describe("integrasi: verifikasi email", () => {
+  it("target yang emailnya belum diverifikasi hilang dari pencarian dan profil; kembali setelah diverifikasi", async () => {
+    const alex = uid(2);
+    await prisma.$executeRawUnsafe(`UPDATE "User" SET "emailVerifiedAt" = NULL WHERE "id" = '${alex}'::uuid`);
+    try {
+      expect(names(await service().search(ME, cmd({ q: "alex", mode: "prefix" })))).not.toContain("Alex");
+      expect(await code(service().getPublicProfile(ME, "alex"))).toBe("NOT_FOUND");
+    } finally {
+      await prisma.$executeRawUnsafe(`UPDATE "User" SET "emailVerifiedAt" = now() WHERE "id" = '${alex}'::uuid`);
+    }
+    expect(names(await service().search(ME, cmd({ q: "alex", mode: "prefix" })))).toContain("Alex");
+  });
+
+  it("pencari yang belum terverifikasi ditolak (FORBIDDEN) sebelum query apa pun jalan", async () => {
+    await prisma.$executeRawUnsafe(`UPDATE "User" SET "emailVerifiedAt" = NULL WHERE "id" = '${ME}'::uuid`);
+    try {
+      expect(await code(service().search(ME, cmd({ q: "alex" })))).toBe("FORBIDDEN");
+      expect(await code(service().getPublicProfile(ME, "alex"))).toBe("FORBIDDEN");
+    } finally {
+      await prisma.$executeRawUnsafe(`UPDATE "User" SET "emailVerifiedAt" = now() WHERE "id" = '${ME}'::uuid`);
+    }
+  });
+});

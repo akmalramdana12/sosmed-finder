@@ -76,7 +76,7 @@ export function seedStatements(): string[] {
   for (const u of USERS) {
     const id = uid(u.n);
     out.push(
-      `INSERT INTO "User"("id","email","passwordHash","username","normalizedUsername","status","deletedAt","updatedAt") VALUES (${lit(id)},${lit(`${u.username.toLowerCase()}@example.test`)},'x',${lit(u.username)},${lit(u.username.toLowerCase())},${lit(u.status ?? "ACTIVE")}::"UserStatus",${u.deleted ? "now()" : "NULL"},now())`,
+      `INSERT INTO "User"("id","email","passwordHash","username","normalizedUsername","status","deletedAt","emailVerifiedAt","updatedAt") VALUES (${lit(id)},${lit(`${u.username.toLowerCase()}@example.test`)},'x',${lit(u.username)},${lit(u.username.toLowerCase())},${lit(u.status ?? "ACTIVE")}::"UserStatus",${u.deleted ? "now()" : "NULL"},now(),now())`,
       `INSERT INTO "Profile"("userId","displayName","updatedAt") VALUES (${lit(id)},${lit(`Name ${u.username}`)},now())`,
       `INSERT INTO "PrivacySettings"("userId","isDiscoverable","searchableByUsername","showPlatforms","locationVisibility") VALUES (${lit(id)},${u.discoverable},${u.searchable ?? true},${u.showPlatforms ?? true},${lit(u.visibility ?? "PRIVATE")}::"LocationVisibility")`,
     );

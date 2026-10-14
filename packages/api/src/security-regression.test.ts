@@ -94,6 +94,17 @@ describe("route handler", () => {
     }
   });
 
+  it("route moderasi (/api/mod) selalu lewat ModerationService, tempat peran diperiksa dari database", () => {
+    const modRoutes = routeFiles.filter((f) => rel(f).startsWith("apps/web/app/api/mod/"));
+    expect(modRoutes.length).toBeGreaterThan(0);
+    for (const file of modRoutes) {
+      const src = read(file);
+      const handlers = [...src.matchAll(METHOD_RE)].length;
+      const calls = [...src.matchAll(/getModerationService\(\)\.(?:listReports|act)\(userId/g)].length;
+      expect(`${rel(file)}: ${calls}/${handlers}`).toBe(`${rel(file)}: ${handlers}/${handlers}`);
+    }
+  });
+
   it("route tidak mengambil id pengguna dari URL/body untuk resource milik sendiri", () => {
     for (const file of routeFiles) {
       const src = read(file);
@@ -192,10 +203,18 @@ describe("DTO publik", () => {
     for (const block of blocks) {
       const name = block[1] ?? "";
       const body = (block[2] ?? "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-      if (name === "MeDto") continue; // MeDto memuat email milik sendiri; dijaga tes profil
+      if (name === "MeDto" || name === "AccountExportDto") continue; // memuat email milik sendiri; dijaga tes khusus
       expect(`${name}: ${FORBIDDEN.test(body)}`).toBe(`${name}: false`);
     }
     expect(OWN_DATA.has("MeDto")).toBe(true);
+  });
+
+  it("AccountExportDto: hanya email yang boleh dari daftar terlarang; tanpa id, sesi, token, atau koordinat", () => {
+    const block = blocks.find((b) => b[1] === "AccountExportDto");
+    expect(block).toBeDefined();
+    const body = (block?.[2] ?? "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(FORBIDDEN.test(body.replace(/\bemail: string;/, ""))).toBe(false);
+    expect(/\b(id|userId|session|token|moderatorNote|reporterId)\b\s*[?:]/.test(body)).toBe(false);
   });
 
   it("DTO publik hasil pencarian tidak memuat id apa pun", () => {

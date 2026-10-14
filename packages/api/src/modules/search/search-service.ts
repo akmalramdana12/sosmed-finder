@@ -44,6 +44,12 @@ export interface SearchDeps {
   hmacSecret: string;
   /** Opsional: bila ada, pola pencarian mencurigakan dicatat ke audit. */
   audit?: AuditWriter;
+  /**
+   * Default true. Pencari DAN hasil wajib berakun dengan email terverifikasi: tanpa ini, akun sekali
+   * pakai bisa dibuat massal untuk memindai atau untuk muncul di pencarian. `false` hanya untuk
+   * lingkungan tanpa email (pengembangan/e2e).
+   */
+  requireVerifiedEmail?: boolean;
 }
 
 export interface SearchCommand {
@@ -63,9 +69,20 @@ export class SearchService {
     this.deps = deps;
   }
 
+  private get requireVerifiedEmail(): boolean {
+    return this.deps.requireVerifiedEmail !== false;
+  }
+
+  private async assertSearcherVerified(searcherId: string): Promise<void> {
+    if (this.requireVerifiedEmail && !(await this.deps.repository.isEmailVerified(searcherId))) {
+      throw new AppError("FORBIDDEN", "Verifikasi email Anda terlebih dahulu (menu Akun) untuk memakai pencarian");
+    }
+  }
+
   async search(searcherId: string, command: SearchCommand): Promise<SearchResponseDto> {
     await this.enforce(`search:min:${searcherId}`, SEARCH_LIMITS.perMinute);
     await this.enforce(`search:day:${searcherId}`, SEARCH_LIMITS.perDay);
+    await this.assertSearcherVerified(searcherId);
 
     // Pertahanan kedua di luar skema: tanpa q maupun radius = "daftar semua orang".
     if (command.q === undefined && command.radiusKm === undefined) {
@@ -103,6 +120,7 @@ export class SearchService {
           ? { text: command.q, mode: command.mode, includeHandles: true }
           : null,
       platformKey: command.platform ?? null,
+      requireVerifiedEmail: this.requireVerifiedEmail,
       radiusM,
       sort,
       fetchLimit: command.limit + 1,
@@ -116,6 +134,7 @@ export class SearchService {
       searcherId,
       usernameQuery: command.q !== undefined,
       platformKey: command.platform ?? null,
+      requireVerifiedEmail: this.requireVerifiedEmail,
       radiusKm: command.radiusKm ?? null,
     };
 
@@ -146,14 +165,21 @@ export class SearchService {
     await this.enforce(`profile:min:${searcherId}`, SEARCH_LIMITS.profilePerMinute);
     await this.enforce(`profile:day:${searcherId}`, SEARCH_LIMITS.profilePerDay);
 
+    await this.assertSearcherVerified(searcherId);
+
     const notFound = new AppError("NOT_FOUND", "Profil tidak ditemukan");
-    const candidate = await this.deps.repository.findByUsername(searcherId, normalizedUsername);
+    const candidate = await this.deps.repository.findByUsername(
+      searcherId,
+      normalizedUsername,
+      this.requireVerifiedEmail,
+    );
     if (!candidate) throw notFound;
     const evaluation = evaluateCandidate(candidate, {
       searcherId,
       usernameQuery: true,
       allowHandleMatch: false,
       platformKey: null,
+      requireVerifiedEmail: this.requireVerifiedEmail,
       radiusKm: null,
     });
     if (!evaluation.ok) throw notFound;

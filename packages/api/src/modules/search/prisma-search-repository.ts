@@ -72,6 +72,7 @@ function toCandidate(row: Row): SearchCandidate {
     displayName: str(row, "displayName"),
     status,
     deleted: bool(row, "deleted"),
+    emailVerified: bool(row, "emailVerified"),
     isDiscoverable: bool(row, "isDiscoverable"),
     searchableByUsername: bool(row, "searchableByUsername"),
     showPlatforms: bool(row, "showPlatforms"),
@@ -101,11 +102,13 @@ export class PrismaSearchRepository implements SearchRepository {
   async findByUsername(
     searcherId: string,
     normalizedUsername: string,
+    requireVerifiedEmail: boolean,
   ): Promise<SearchCandidate | null> {
     const { text, values } = buildSearchQuery({
       searcherId,
       query: { text: normalizedUsername, mode: "exact", includeHandles: false },
       platformKey: null,
+      requireVerifiedEmail,
       radiusM: null,
       sort: "username",
       fetchLimit: 1,
@@ -122,6 +125,14 @@ export class PrismaSearchRepository implements SearchRepository {
       select: { id: true },
     });
     return row !== null;
+  }
+
+  async isEmailVerified(userId: string): Promise<boolean> {
+    const user = await prisma.user.findFirst({
+      where: { id: userId, emailVerifiedAt: { not: null } },
+      select: { id: true },
+    });
+    return user !== null;
   }
 
   async logSearch(entry: SearchLogEntry): Promise<void> {

@@ -32,8 +32,8 @@ export { publicUsernameSchema, searchQuerySchema } from "./search";
 export type { SearchQueryInput } from "./search";
 export { blockUserSchema, createReportSchema } from "./safety";
 export type { BlockUserInput, CreateReportInput } from "./safety";
-export { changePasswordSchema, deleteAccountSchema } from "./account";
-export type { ChangePasswordInput, DeleteAccountInput } from "./account";
+export { changePasswordSchema, deleteAccountSchema, exportDataSchema } from "./account";
+export type { ChangePasswordInput, DeleteAccountInput, ExportDataInput } from "./account";
 export { cleanMultiLine, cleanSingleLine } from "./text";
 export {
   recoveryTokenSchema,
@@ -42,3 +42,5 @@ export {
   verifyEmailSchema,
 } from "./recovery";
 export type { RequestPasswordResetInput, ResetPasswordInput, VerifyEmailInput } from "./recovery";
+export { listReportsQuerySchema, moderationActionSchema, reportIdSchema } from "./moderation";
+export type { ListReportsQueryInput, ModerationActionInput } from "./moderation";

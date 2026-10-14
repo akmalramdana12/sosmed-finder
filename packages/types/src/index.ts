@@ -151,3 +151,69 @@ export interface ApiErrorBody {
     requestId: string;
   };
 }
+
+export const REPORT_STATUSES = ["OPEN", "REVIEWING", "RESOLVED", "DISMISSED"] as const;
+export type ReportStatusValue = (typeof REPORT_STATUSES)[number];
+
+/** Tindakan moderator pada sebuah laporan (POST /api/mod/reports/:id). */
+export const MODERATION_ACTIONS = ["review", "dismiss", "resolve", "suspend", "reinstate"] as const;
+export type ModerationAction = (typeof MODERATION_ACTIONS)[number];
+
+/**
+ * Laporan untuk moderator. Sengaja TANPA identitas pelapor, email, atau data lokasi:
+ * moderator hanya butuh isi laporan dan target. `id` laporan hanya ada di DTO ini.
+ */
+export interface ModerationReportDto {
+  id: string;
+  reason: ReportReasonValue;
+  details: string | null;
+  status: ReportStatusValue;
+  createdAt: string;
+  resolvedAt: string | null;
+  moderatorNote: string | null;
+  target: {
+    username: string;
+    status: "ACTIVE" | "SUSPENDED" | "PENDING_DELETION";
+    /** Jumlah laporan OPEN/REVIEWING terhadap target yang sama (termasuk ini). */
+    openReports: number;
+  };
+}
+
+export interface ModerationListDto {
+  data: ModerationReportDto[];
+  nextCursor: string | null;
+}
+
+/**
+ * Ekspor data milik pengguna sendiri (POST /api/me/export). Whitelist: tanpa hash password, token,
+ * sesi, koordinat (hanya label dan tingkat akurasi), catatan moderasi, laporan terhadap pengguna,
+ * log audit, maupun riwayat pencarian.
+ */
+export interface AccountExportDto {
+  exportedAt: string;
+  account: { email: string; username: string; emailVerified: boolean; createdAt: string };
+  profile: { displayName: string; bio: string | null; avatarUrl: string | null };
+  privacy: {
+    isDiscoverable: boolean;
+    searchableByUsername: boolean;
+    showPlatforms: boolean;
+    locationVisibility: LocationVisibility;
+  };
+  location: {
+    isEnabled: boolean;
+    accuracyLevel: AccuracyLevel;
+    areaLabel: string | null;
+    cityLabel: string | null;
+    discoverableRadiusKm: number;
+    updatedAt: string;
+  } | null;
+  socialAccounts: Array<{
+    platform: string;
+    username: string;
+    profileUrl: string;
+    isVerified: boolean;
+    isDiscoverable: boolean;
+  }>;
+  blocks: Array<{ username: string; blockedAt: string }>;
+  reportsMade: Array<{ reason: ReportReasonValue; status: ReportStatusValue; details: string | null; createdAt: string }>;
+}

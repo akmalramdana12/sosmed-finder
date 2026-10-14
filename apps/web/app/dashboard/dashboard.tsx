@@ -40,6 +40,7 @@ export function Dashboard() {
 
       <EmailSection me={me} />
       <PasswordSection onChanged={() => router.replace("/login")} />
+      <ExportSection />
       <DeleteSection onDeleted={() => router.replace("/")} />
     </div>
   );
@@ -118,6 +119,67 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
         <Field id="newPassword" label="Password baru" type="password" autoComplete="new-password" minLength={12} hint="Minimal 12 karakter." required />
         <SubmitButton busy={busy}>Ganti password</SubmitButton>
       </form>
+    </section>
+  );
+}
+
+function ExportSection() {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setBusy(true);
+    setError(null);
+    setDone(false);
+    const result = await apiRequest<{ data: unknown }>("/api/me/export", {
+      method: "POST",
+      body: { password: String(form.get("exportPassword") ?? "") },
+    });
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
+    // Berkas dibuat di browser dari respons; tidak ada URL yang bisa dibagikan.
+    const blob = new Blob([JSON.stringify(result.data.data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "social-finder-data.json";
+    link.click();
+    URL.revokeObjectURL(url);
+    setDone(true);
+    setOpen(false);
+  }
+
+  return (
+    <section aria-labelledby="export-heading" className="space-y-3 border-t border-neutral-200 pt-8">
+      <h2 id="export-heading" className="text-lg font-semibold text-neutral-900">
+        Unduh data saya
+      </h2>
+      <p className="text-sm text-neutral-600">
+        Salinan data akun Anda (profil, akun sosmed, pengaturan privasi, label lokasi, daftar blokir, laporan yang Anda buat). Koordinat tidak disertakan.
+      </p>
+      {done ? <Notice kind="success">Data diunduh. Simpan berkas ini dengan aman: berisi email Anda.</Notice> : null}
+      {open ? (
+        <form onSubmit={submit} className="space-y-4" noValidate>
+          {error ? <Notice kind="error">{error}</Notice> : null}
+          <Field id="exportPassword" label="Password" type="password" autoComplete="current-password" required />
+          <SubmitButton busy={busy}>Unduh</SubmitButton>
+        </form>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-800 hover:bg-neutral-100"
+        >
+          Unduh data…
+        </button>
+      )}
     </section>
   );
 }

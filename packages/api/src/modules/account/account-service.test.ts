@@ -4,7 +4,7 @@ import { RateLimitedError } from "../../errors/rate-limited-error";
 import { MemoryRateLimiter } from "../auth/rate-limit";
 import type { AuditEvent, PasswordHasher } from "../auth/types";
 import { ACCOUNT_LIMITS, AccountService, DELETION_GRACE_DAYS } from "./account-service";
-import type { AccountRepository } from "./types";
+import type { AccountExportRecord, AccountRepository } from "./types";
 
 const CTX = { ip: "203.0.113.7", userAgent: "vitest" };
 const SECRET = "rahasia-uji-yang-cukup-panjang-1234567890";
@@ -22,6 +22,21 @@ class FakeRepository implements AccountRepository {
   revokedAt: Date | null = null;
   deletedAt: Date | null = null;
   purgeCutoff: Date | null = null;
+  exportRecord: AccountExportRecord | null = {
+    email: "me@example.test",
+    username: "Me",
+    emailVerifiedAt: new Date("2026-10-01T00:00:00Z"),
+    createdAt: new Date("2026-09-01T00:00:00Z"),
+    profile: { displayName: "Me Doe", bio: "halo", avatarUrl: null },
+    privacy: { isDiscoverable: true, searchableByUsername: true, showPlatforms: false, locationVisibility: "AREA_ONLY" },
+    location: { isEnabled: true, accuracyLevel: "AREA", areaLabel: "Sekupang", cityLabel: null, discoverableRadiusM: 5000, updatedAt: new Date("2026-10-02T00:00:00Z") },
+    socialAccounts: [{ platformKey: "instagram", username: "me_ig", profileUrl: "https://instagram.com/me_ig", isVerified: false, isDiscoverable: true }],
+    blocks: [{ username: "bob", createdAt: new Date("2026-10-03T00:00:00Z") }],
+    reportsMade: [{ reason: "SPAM", status: "OPEN", details: "spam", createdAt: new Date("2026-10-04T00:00:00Z") }],
+  };
+  async loadExport() {
+    return this.exportRecord;
+  }
   async getPasswordHash() {
     return this.hash;
   }
@@ -136,5 +151,36 @@ describe("AccountService.purgeExpired", () => {
     expect(await service.purgeExpired()).toBe(2);
     expect(repository.purgeCutoff).toEqual(new Date(NOW.getTime() - DELETION_GRACE_DAYS * 86_400_000));
     expect(DELETION_GRACE_DAYS).toBe(30);
+  });
+});
+
+describe("exportData", () => {
+  it("password salah ditolak dan tidak ada data dimuat atau diaudit", async () => {
+    const { service, audits } = setup();
+    await expect(service.exportData(ME, "salah", CTX)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(audits).toHaveLength(0);
+  });
+
+  it("mengembalikan data sendiri tanpa koordinat, hash, token, atau data moderasi; diaudit tanpa isi", async () => {
+    const { service, audits } = setup();
+    const dto = await service.exportData(ME, "password-lama-12", CTX);
+    expect(dto.account).toEqual({ email: "me@example.test", username: "Me", emailVerified: true, createdAt: "2026-09-01T00:00:00.000Z" });
+    expect(dto.location).toEqual({ isEnabled: true, accuracyLevel: "AREA", areaLabel: "Sekupang", cityLabel: null, discoverableRadiusKm: 5, updatedAt: "2026-10-02T00:00:00.000Z" });
+    expect(dto.socialAccounts[0]?.platform).toBe("instagram");
+    expect(dto.blocks).toEqual([{ username: "bob", blockedAt: "2026-10-03T00:00:00.000Z" }]);
+    expect(Object.keys(dto).sort()).toEqual(["account", "blocks", "exportedAt", "location", "privacy", "profile", "reportsMade", "socialAccounts"]);
+    expect(JSON.stringify(dto)).not.toMatch(/latitude|longitude|geography|passwordHash|token|moderatorNote|reporterId|"id"/i);
+    expect(audits.map((a) => a.action)).toEqual(["account.export"]);
+    expect(JSON.stringify(audits)).not.toMatch(/me@example|Sekupang|bob/);
+  });
+
+  it("akun tidak ada: NOT_FOUND; dibatasi 3 kali per jam", async () => {
+    const { service, repository } = setup();
+    repository.exportRecord = null;
+    await expect(service.exportData(ME, "password-lama-12", CTX)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.exportData(ME, "password-lama-12", CTX)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.exportData(ME, "password-lama-12", CTX)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.exportData(ME, "password-lama-12", CTX)).rejects.toBeInstanceOf(RateLimitedError);
+    expect(ACCOUNT_LIMITS.exportData.limit).toBe(3);
   });
 });
