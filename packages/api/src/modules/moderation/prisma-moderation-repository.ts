@@ -130,13 +130,18 @@ export class PrismaModerationRepository implements ModerationRepository {
 
   private async withCounts(rows: ReportRow[]): Promise<ModerationReportRecord[]> {
     if (rows.length === 0) return [];
+    // Satu count per target (maks. ukuran halaman + 1, memakai indeks targetUserId). Sengaja tidak
+    // memakai groupBy: tipenya di Prisma rewel dan hitungan sederhana ini tidak membutuhkannya.
     const ids = [...new Set(rows.map((row) => row.targetUserId))];
-    const groups: Array<{ targetUserId: string; _count: { _all: number } }> = await prisma.report.groupBy({
-      by: ["targetUserId"],
-      where: { status: { in: OPEN }, targetUserId: { in: ids } },
-      _count: { _all: true },
-    });
-    const countById = new Map(groups.map((group) => [group.targetUserId, group._count._all] as const));
+    const counts = await Promise.all(
+      ids.map(
+        async (id): Promise<readonly [string, number]> => [
+          id,
+          await prisma.report.count({ where: { targetUserId: id, status: { in: OPEN } } }),
+        ],
+      ),
+    );
+    const countById = new Map<string, number>(counts);
     return rows.map((row) => ({
       id: row.id,
       reason: row.reason,
